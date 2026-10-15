@@ -1,0 +1,33 @@
+name: Bug report
+description: A table is missed, parsed incorrectly, or SPARTAN crashes
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did SPARTAN produce, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: document
+    attributes:
+      label: Document
+      description: >
+        Attach the PDF or a single page of it (only if you may share it publicly), or a
+        screenshot of the table. Mention whether it is born-digital or scanned.
+  - type: input
+    id: command
+    attributes:
+      label: Command or code used
+      placeholder: python -m spartan --file notice.pdf --csv
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output or error message
+      render: shell
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: SPARTAN 2.0.0, Python 3.12, Windows 11, Tesseract 5.4 / no OCR
