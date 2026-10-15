@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use SPARTAN, please cite the paper below."
+title: "SPARTAN: Structured Parsing and Relevant Table Analysis"
+type: software
+version: 2.0.0
+license: MIT
+repository-code: "https://github.com/shlok-n/spartan"
+url: "https://github.com/shlok-n/spartan"
+authors:
+  - family-names: Nandurbarkar
+    given-names: Shlok
+preferred-citation:
+  type: article
+  title: "SPARTAN: automated table detection and extraction from documents using advanced OpenCV heuristics and OCR techniques"
+  authors:
+    - family-names: Nandurbarkar
+      given-names: S.
+    - family-names: Chaudhari
+      given-names: A. Y.
+    - family-names: Mulla
+      given-names: R.
+  journal: "Scientific Reports"
+  volume: 16
+  start: 14954
+  year: 2026
+  doi: 10.1038/s41598-026-44325-7

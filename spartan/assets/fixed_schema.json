@@ -1,0 +1,18 @@
+{
+    "PCN_DATE": "",
+    "PCN_NUMBER": "",
+    "Manufacturer_Name": "",
+    "Change_Type": "",
+    "Effective_Date": "",
+    "Last_Time_Buy_Date": "",
+    "Last_Shipment_Date": "",
+    "tables": [
+        {
+            "columns": {
+                "Impacted_Part": [],
+                "Replacement_Part": [],
+                "Pin_to_Pin_Match": []
+            }
+        }
+    ]
+}

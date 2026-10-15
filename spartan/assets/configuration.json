@@ -1,0 +1,115 @@
+{
+    "PCN_DATE": [
+        "Notice Date",
+        "Notification Date",
+        "Date",
+        "Date of Publication",
+        "Notice Issue Date",
+        "Issue date",
+        "PDN Date",
+        "PDN Issue Date",
+        "Publish Date",
+        "Publication Date"
+    ],
+    "PCN_NUMBER": [
+        "PCN ID",
+        "PCN#",
+        "PCN #",
+        "PCN Number",
+        "PD_",
+        "Change Notification#",
+        "Change Notification #",
+        "Change Notification No",
+        "PTN No.",
+        "PDN #",
+        "PDN Number"
+    ],
+    "Manufacturer_Name": [
+        "Anything that looks like a Manufacturer link, Usually you can check a link might in the text likely a link to the manufacturer's website, from that you can deduce the manufacturers name. Or anything that seems to end with Inc. or Incorporated"
+    ],
+    "Change_Type": [
+        "Change Type",
+        "Type of Change"
+    ],
+    "Effective_Date": [
+        "Implementation Date",
+        "Effective Date"
+    ],
+    "Impacted_Part": [
+        "Model",
+        "Central Part Number",
+        "EOL Devices",
+        "EOL Part",
+        "Discontinued OPN",
+        "Devices Being Discontinued",
+        "Discontinued Products",
+        "Product Code",
+        "Affected Part Numbers",
+        "Old 90nm Part Number E grade",
+        "Old Part Number",
+        "Current Model",
+        "Exact Renesas Part # No other variation is being impacted.",
+        "Parts Terminated Supplier Part No.",
+        "Product",
+        "Your Product Name",
+        "Our Product Name",
+        "Obsolete Part Numbers",
+        "9FGL Current Part# (RevC)"
+    ],
+    "Replacement_Part": [
+        "Suggested Replacement",
+        "Replacements",
+        "Replacement OPN",
+        "Replacement Part",
+        "Recommended Replacement Part",
+        "Recommended Replacement Part Numbers",
+        "Recommended New 65nm Part Number",
+        "Recommended Part Number",
+        "Replacement Model",
+        "Replacement/Similar / Re-Design",
+        "Suggested Replacement Parts Supplier Part No.",
+        "Replacement",
+        "Our Substitute"
+    ],
+    "Pin_to_Pin_Match": [
+        "Pin to Pin Match",
+        "Pin to Pin Compatible"
+    ],
+    "Last_Time_Buy_Date": [
+        "Last Buy Date",
+        "Last Order Date",
+        "Last Order Acceptance",
+        "Last Product Discontinuance Order Date",
+        "Affected part Last-Time-Buy Date (LTB)",
+        "LTB",
+        "Last Time Buy Date",
+        "Last Time Buy Option",
+        "Final Last Time Buy (LTB)",
+        "LTB / Withdrawn Date",
+        "Last Order Entry Date",
+        "Last Date to Order"
+    ],
+    "Last_Shipment_Date": [
+        "Last Shipment Date",
+        "Last Delivery Date",
+        "Last Time Shipments",
+        "Last Product Discontinuance Shipment Date",
+        "Affected part Last-Time-Shipdate (LTS):",
+        "LTS",
+        "Last Time Ship Date",
+        "Last Shipment (LTS)",
+        "LTS / Obsolete Date",
+        "Last Order Delivery Date",
+        "The final delivery date",
+        "Last Date to Ship"
+    ],
+    "Impacted_Table_Headers": [
+        "EOL Devices with Life-time Buy Opportunity and No Replacement Parts",
+        "EOL Devices with No Life-time Buy Opportunity and No Replacement Parts",
+        "Product Affected",
+        "Affected Part Numbers",
+        "Models Affected",
+        "** List of Affected Models **",
+        "Please find the Standard Public List impacted by the change."
+    ]
+}

@@ -1,0 +1,69 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spartan-tables"
+dynamic = ["version"]
+description = "SPARTAN: heuristic, training-free table detection and extraction for PDF documents"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Shlok Nandurbarkar" }]
+keywords = ["table detection", "table extraction", "pdf", "opencv", "ocr", "document ai"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+    "Topic :: Text Processing",
+    "Typing :: Typed",
+]
+dependencies = [
+    "numpy>=1.24",
+    "opencv-python>=4.8",
+    "pypdfium2>=4.25",
+    "pydantic>=2.5",
+    "pydantic-settings>=2.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/shlok-n/spartan"
+Issues = "https://github.com/shlok-n/spartan/issues"
+Changelog = "https://github.com/shlok-n/spartan/blob/main/CHANGELOG.md"
+Paper = "https://doi.org/10.1038/s41598-026-44325-7"
+
+[project.optional-dependencies]
+ocr = ["pytesseract>=0.3.10"]
+api = ["fastapi>=0.110", "uvicorn>=0.27", "python-multipart>=0.0.9"]
+llm = ["ollama>=0.3"]
+azure = ["azure-cognitiveservices-vision-computervision>=0.9", "msrest>=0.7", "openai>=1.30"]
+metrics = ["psutil>=5.9"]
+dev = ["pytest>=8", "httpx>=0.27", "build>=1.2", "twine>=5"]
+all = ["spartan-tables[ocr,api,llm,metrics]"]
+
+[project.scripts]
+spartan = "spartan.cli:main"
+spartan-api = "spartan.api:run"
+
+[tool.setuptools.packages.find]
+include = ["spartan*"]
+
+[tool.setuptools.package-data]
+spartan = ["assets/*", "py.typed"]
+
+[tool.setuptools.dynamic]
+version = { attr = "spartan.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = ["dataset: end-to-end tests that need the PDF dataset in ../Dataset"]
