@@ -258,6 +258,8 @@ class Segment:
     words: list[Word]                # in segment coordinates
     detection_method: str | None = None   # tables only
     pseudo_bordered: bool = False         # tables only: pseudo boundaries were drawn
+    pseudo_columns: list[float] = field(default_factory=list)  # pseudo separators (segment coords)
+    pseudo_rows: list[float] = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #

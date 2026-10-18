@@ -296,8 +296,9 @@ document with an 8B model on CPU.
 
 ## Known limitations
 
-- Scanned pages need the Tesseract binary; without it, tables on such pages are detected
-  but their cells stay empty (a warning is logged).
+- Scanned pages, and pages whose table text is embedded as images, need the Tesseract
+  binary; without it, tables on such pages have no text and are left out (a warning is
+  logged).
 - Heuristics assume roughly upright pages; heavily skewed scans are not de-skewed.
 - Word splitting relies on glyph geometry; PDFs that break a text run in the middle of a
   word can still produce a stray split (e.g. "Withdrawa l").

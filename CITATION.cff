@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: "If you use SPARTAN, please cite the paper below."
 title: "SPARTAN: Structured Parsing and Relevant Table Analysis"
 type: software
-version: 2.0.0
+version: 2.1.0
 license: MIT
 repository-code: "https://github.com/shlok-n/spartan"
 url: "https://github.com/shlok-n/spartan"

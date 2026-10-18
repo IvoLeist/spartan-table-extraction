@@ -9,16 +9,22 @@ Takes a page (or column) image and splits it into ``pre_text``, ``table_N``,
    line extraction (25x1 / 1x25 kernels), run with and without an extra 3x3
    dilation (the path yielding more cells wins), 4-sided convex cell contours
    (w > 100, h > 20), clustering of cell rows whose gap is < 20 px, and
-   acceptance of regions with w >= 500 and h >= 100 (paper Table 3).
+   acceptance of regions with w >= 500 and h >= 100 (paper Table 3). As an
+   extension, tables placed side by side are separated.
 3. **Text-based detector** - borderless tables formed purely by text
    arrangement: phrases stacked over each other with left-edge alignment
    (5 px tolerance), falling back to centre alignment (and, as an extension, right
    alignment for numeric columns). At least two such columns whose tops align
-   form a table region. **Pseudo boundaries** are then drawn around the text so
+   form a table region. Stacked regions that are pieces of one table (split by
+   a section heading, say) are joined. Regions that are lists, running text in
+   every column (multi-column page layout), rotated chart labels or a single
+   row are rejected. **Pseudo boundaries** are then drawn around the text so
    the borderless table is handled by exactly the same downstream logic as a
-   bordered one.
+   bordered one; its grid is built from the known separators rather than
+   re-detected in the image.
 4. **Table unification** - a text-based detection overlapping a boundary-based
-   one is discarded (both point at the same table).
+   one is discarded (both point at the same table), unless the ruled box is
+   only the header of a larger text table; then both are joined.
 5. **Segmentation** into pre/inter/post text and table segments.
 """
 
@@ -38,7 +44,9 @@ from .pre_processing import preprocess_image
 
 log = logging.getLogger(__name__)
 
-_LIST_MARKER = re.compile(r"^(\(?[0-9]{1,2}[.)]|\(?[a-zA-Z][.)]|\(?[ivxIVX]{1,4}[.)]|[-–•*·o▪■●])(\s+\(?[0-9a-zA-Z]{1,3}[.)])*$")
+_LIST_MARKER = re.compile(r"^(\(?[0-9]{1,2}[.)]|\(?[a-zA-Z][.)]|\(?[ivxIVX]{1,4}[.)]|[-–•*·o▪■●]|[^\w\s]{1,3})(\s+\(?[0-9a-zA-Z]{1,3}[.)])*$")
+# A caption between two borderless blocks means they are separate tables.
+_CAPTION = re.compile(r"^(table|tab\.|figure|fig\.|chart|graph|source|note)s?\b", re.IGNORECASE)
 
 
 # --------------------------------------------------------------------------- #
@@ -116,9 +124,24 @@ def find_boundary_tables(binary: np.ndarray, config: PipelineConfig) -> tuple[li
             clusters[-1].append(cell)
             bottom = max(bottom, cell.y1)
 
+    # Extension: tables placed side by side share rows; split where no cell covers a vertical strip.
+    clusters = [part for c in clusters for part in _split_side_by_side(c, gap)]
     min_w, min_h = config.px(p.min_table_width), config.px(p.min_table_height)
     tables = [box for box in (BBox.union_all(c) for c in clusters) if box.width >= min_w and box.height >= min_h]
     return tables, cells
+
+
+def _split_side_by_side(cells: list[BBox], gap: float) -> list[list[BBox]]:
+    parts: list[list[BBox]] = []
+    right = None
+    for cell in sorted(cells, key=lambda c: c.x0):
+        if right is None or cell.x0 > right + gap:
+            parts.append([cell])
+            right = cell.x1
+        else:
+            parts[-1].append(cell)
+            right = max(right, cell.x1)
+    return parts
 
 
 # --------------------------------------------------------------------------- #
@@ -224,8 +247,7 @@ def find_text_tables(words: Sequence[Word], width: int, height: int, config: Pip
         else:
             groups.append([col])
 
-    candidates = []
-    min_w = config.px(p.min_text_table_width)
+    blocks: list[tuple[BBox, int, int]] = []
     for group in groups:
         if len(group) < p.min_columns:
             continue
@@ -239,12 +261,62 @@ def find_text_tables(words: Sequence[Word], width: int, height: int, config: Pip
             for ph in phrases[li]:
                 if ph.bbox.x1 > box.x0 and ph.bbox.x0 < box.x1:
                     box = box.union(ph.bbox)
+        blocks.append((box, first, last))
+
+    candidates = []
+    min_w = config.px(p.min_text_table_width)
+    for box in _merge_blocks(blocks, lines, float(np.median(line_h))):
         if box.width < min_w:
             continue
         cand = _build_pseudo_grid(box, words, width, height, config)
         if cand is not None:
             candidates.append(cand)
     return _remove_nested(candidates)
+
+
+def _merge_blocks(blocks: list[tuple[BBox, int, int]], lines: list[list[Word]], line_height: float) -> list[BBox]:
+    """Join vertically adjacent blocks that are pieces of one table.
+
+    A section heading, a wrapped label or a column that starts lower down
+    interrupts the column chains, so one table is found as several stacked
+    blocks. Blocks are joined when they span roughly the same width, are
+    separated by at most a few lines, no caption ("Table 2", "Source: ...") lies
+    between, and the lower block does not start with the same row label as the
+    upper one (two tables with the same layout, e.g. one per year).
+    """
+    def text(li: int) -> str:
+        return " ".join(w.text for w in lines[li])
+
+    def label(li: int) -> str:
+        line, out = lines[li], [lines[li][0]]
+        for prev, w in zip(line, line[1:]):
+            if w.bbox.x0 - prev.bbox.x1 > prev.bbox.height:
+                break
+            out.append(w)
+        return " ".join(w.text for w in out)
+
+    # Blocks found inside a larger block (sub-groups of its columns) add nothing.
+    blocks = sorted(blocks, key=lambda b: -b[0].area)
+    outer: list[tuple[BBox, int, int]] = []
+    for b in blocks:
+        if not any(o[0].contains(b[0], tolerance=2) for o in outer):
+            outer.append(b)
+
+    merged: list[tuple[BBox, int, int]] = []
+    for box, first, last in sorted(outer, key=lambda b: b[1]):
+        if merged:
+            prev, p_first, p_last = merged[-1]
+            overlap = min(prev.x1, box.x1) - max(prev.x0, box.x0)
+            between = [text(li) for li in range(p_last + 1, first)]
+            if (overlap >= 0.6 * max(prev.width, box.width)
+                    and box.y0 - prev.y1 <= 3.5 * line_height
+                    and first - p_last - 1 <= 2
+                    and not any(_CAPTION.match(t) for t in between)
+                    and label(first) != label(p_first)):
+                merged[-1] = (prev.union(box), p_first, max(p_last, last))
+                continue
+        merged.append((box, first, last))
+    return [b for b, _, _ in merged]
 
 
 def _remove_nested(cands: list[TableCandidate]) -> list[TableCandidate]:
@@ -263,6 +335,9 @@ def _build_pseudo_grid(
     table_words = [w for w in words if box.contains_point(w.bbox.cx, w.bbox.cy)]
     lines = group_words_into_lines(table_words)
     if len(lines) < p.min_rows:
+        return None
+    # Rotated text (chart axis labels) arrives as single letters.
+    if sum(len(w.text) == 1 and w.text.isalpha() for w in table_words) >= 0.5 * len(table_words):
         return None
     phrases = _line_phrases(lines, config)
 
@@ -291,6 +366,7 @@ def _build_pseudo_grid(
             break
     if len(separators) + 1 < p.min_columns:
         return None
+    separators = _split_word_columns(separators, lines, phrases, box, min_sep)
 
     # Row separators: a line starts a new row when it has text in the first column or
     # in at least half of the columns; other lines continue a wrapped row.
@@ -319,6 +395,10 @@ def _build_pseudo_grid(
             rows.append([li])
         else:
             rows[-1].append(li)
+    if len(rows) < 2:
+        return None                 # one (wrapped) line of text is not a table
+    if _is_prose(phrases, edges):
+        return None
     row_seps = []
     for prev, nxt in zip(rows[:-1], rows[1:]):
         bottom = max(w.bbox.y1 for li in prev for w in lines[li])
@@ -328,6 +408,56 @@ def _build_pseudo_grid(
     pad = config.px(p.pseudo_padding)
     padded = box.expand(pad).clip(width, height)
     return TableCandidate(bbox=padded, method="text", pseudo_columns=separators, pseudo_rows=row_seps)
+
+
+def _split_word_columns(
+    separators: list[float], lines: list[list[Word]], phrases: list[list[_Phrase]], box: BBox, min_sep: float
+) -> list[float]:
+    """Add separators at word gaps that are free in every row.
+
+    Numeric columns are often closer together than the phrase gap, so
+    "1,029.8 1,009.2 1,210.1" forms one phrase. A gap of at least ~two spaces
+    that no word of any multi-phrase line crosses is a column boundary as well.
+    Single-phrase lines (section headings, spanning text) are ignored.
+    """
+    rows = [ln for ln, ph in zip(lines, phrases) if len(ph) >= 2]
+    if len(rows) < 3:
+        return separators
+    height = float(np.median([w.bbox.height for ln in rows for w in ln]))
+    min_gap = max(min_sep, 0.6 * height)
+    x0, x1 = int(box.x0), int(np.ceil(box.x1))
+    occupied = np.zeros(x1 - x0 + 1, dtype=bool)
+    for line in rows:
+        for w in line:
+            occupied[max(0, int(w.bbox.x0) - x0):int(np.ceil(w.bbox.x1)) - x0] = True
+    left = int(min(w.bbox.x0 for ln in rows for w in ln)) - x0
+    right = int(np.ceil(max(w.bbox.x1 for ln in rows for w in ln))) - x0
+    added, start = [], None
+    for i in range(max(left, 0), min(right, len(occupied))):
+        if not occupied[i] and start is None:
+            start = i
+        elif occupied[i] and start is not None:
+            mid = x0 + (start + i) / 2.0
+            if i - start >= min_gap and all(abs(mid - s) >= min_gap for s in separators):
+                added.append(mid)
+            start = None
+    return sorted(separators + added)
+
+
+def _is_prose(phrases: list[list[_Phrase]], edges: list[float]) -> bool:
+    """Running text in every column (multi-column page layout), not a table."""
+    n_cols = len(edges) - 1
+    counts: list[list[int]] = [[] for _ in range(n_cols)]
+    for line in phrases:
+        per_col = [0] * n_cols
+        for ph in line:
+            for w in ph.words:
+                c = int(np.searchsorted(edges, w.bbox.cx, side="right")) - 1
+                per_col[min(max(c, 0), n_cols - 1)] += 1
+        for c, k in enumerate(per_col):
+            if k:
+                counts[c].append(k)
+    return all(len(c) and float(np.median(c)) >= 5 for c in counts)
 
 
 def draw_pseudo_boundaries(table_image: np.ndarray, cand: TableCandidate, origin: BBox, config: PipelineConfig) -> np.ndarray:
@@ -349,14 +479,43 @@ def draw_pseudo_boundaries(table_image: np.ndarray, cand: TableCandidate, origin
 # --------------------------------------------------------------------------- #
 # 4. Unification and 5. segmentation
 # --------------------------------------------------------------------------- #
-def unify_tables(boundary: list[BBox], text: list[TableCandidate]) -> list[TableCandidate]:
-    """Boundary tables win; text tables overlapping them are discarded."""
-    unified = [TableCandidate(bbox=b, method="boundary") for b in boundary]
+def unify_tables(
+    boundary: list[BBox], text: list[TableCandidate], words: Sequence[Word] = (),
+    width: int = 0, height: int = 0, config: PipelineConfig | None = None,
+) -> list[TableCandidate]:
+    """Boundary tables win; text tables overlapping them are discarded.
+
+    Extension: a ruled box at the top of a much larger text table is that
+    table's header (only the header is ruled, the body is not). The two are
+    joined into one text table.
+    """
+    absorbed: set[int] = set()
+    kept_text: list[TableCandidate] = []
     for cand in text:
-        if any(cand.bbox.intersects(b) for b in boundary):
+        hits = [i for i, b in enumerate(boundary) if cand.bbox.intersects(b) and i not in absorbed]
+        if not hits:
+            kept_text.append(cand)
             continue
-        unified.append(cand)
-    return unified
+        if config is None:
+            continue
+        headers = [i for i in hits if _is_ruled_header(boundary[i], cand.bbox)]
+        if len(headers) != len(hits):
+            continue
+        box = BBox.union_all([cand.bbox, *(boundary[i] for i in headers)])
+        joined = _build_pseudo_grid(box, words, width, height, config)
+        if joined is not None:
+            absorbed.update(headers)
+            kept_text.append(joined)
+    unified = [TableCandidate(bbox=b, method="boundary") for i, b in enumerate(boundary) if i not in absorbed]
+    return unified + kept_text
+
+
+def _is_ruled_header(box: BBox, table: BBox) -> bool:
+    """A ruled box covering the top of a text table but less than half of it."""
+    inter = box.intersection(table)
+    return (inter is not None and inter.area < 0.5 * table.area
+            and box.y0 <= table.y0 + 0.1 * table.height and box.y1 < table.y0 + 0.5 * table.height
+            and box.x0 >= table.x0 - 0.1 * table.width and box.x1 <= table.x1 + 0.1 * table.width)
 
 
 def detect_tables(image: np.ndarray, words: Sequence[Word], config: PipelineConfig) -> tuple[BBox, list[TableCandidate], dict]:
@@ -369,7 +528,7 @@ def detect_tables(image: np.ndarray, words: Sequence[Word], config: PipelineConf
 
     boundary, cells = find_boundary_tables(cropped_binary, config)
     text = find_text_tables(cropped_words, int(crop.width), int(crop.height), config)
-    tables = unify_tables(boundary, text)
+    tables = unify_tables(boundary, text, cropped_words, int(crop.width), int(crop.height), config)
     debug = {"boundary": boundary, "cells": cells, "text": [t.bbox for t in text]}
     return crop, tables, debug
 
@@ -421,6 +580,8 @@ def segment_region(
             words=words_in_box(words, box),
             detection_method=table.method,
             pseudo_bordered=pseudo,
+            pseudo_columns=[x + crop.x0 - box.x0 for x in table.pseudo_columns],
+            pseudo_rows=[y + crop.y0 - box.y0 for y in table.pseudo_rows],
         ))
         cursor = max(cursor, table.bbox.y1)
 

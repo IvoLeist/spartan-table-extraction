@@ -51,7 +51,13 @@ from .models import (
 )
 from .ocr import OcrEngine, correct_ocr_column, ocr_cells
 from .table_merging import can_merge, is_repeated_header, merge_tables
-from .table_parser import parse_table, remove_empty_lines
+from .table_parser import (
+    grid_from_separators,
+    parse_table,
+    remove_empty_lines,
+    split_unruled_columns,
+    split_unruled_rows,
+)
 from .text_extraction import assign_words_to_cells
 
 log = logging.getLogger(__name__)
@@ -403,7 +409,12 @@ def curate_segments(
                 items.append(("text", TextBlock(seg.id, seg.kind, text, page_box)))
             continue
 
-        parsed = parse_table(seg.image, seg.words, config)
+        if seg.pseudo_bordered:
+            parsed = grid_from_separators(seg.image.shape[1], seg.image.shape[0],
+                                          seg.pseudo_columns, seg.pseudo_rows, config)
+        else:
+            parsed = parse_table(seg.image, seg.words, config)
+            parsed = split_unruled_rows(split_unruled_columns(parsed, seg.words, config), seg.words, config)
         texts, used_ocr = fill_cell_text(seg, parsed, config, ocr_engine)
         tables = build_tables(parsed, texts, seg, page_number, page_offset, config, text_source.value, used_ocr)
         if debug is not None:

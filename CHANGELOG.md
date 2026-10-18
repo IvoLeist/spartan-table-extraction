@@ -1,5 +1,34 @@
 # Changelog
 
+## 2.1.0 — 2026-10-18
+
+Measured on the ICDAR 2013 table competition dataset (corrected version, 67 PDFs):
+GriTS-Con 69.2 → 77.5, table precision 50 % → 79 %, tables detected 76 % → 88 %,
+adjacency F1 71.2 → 81.9. Output on PCN/PDN notices unchanged.
+
+Tables that rule only part of their grid:
+
+- Body rows without row lines (all values of a column in one tall cell) are split at the
+  gaps between text lines when the lines look like data (aligned across columns, short,
+  with a numeric column); header rows and wrapped sentences are left alone.
+- Body rows without column lines (each row one wide cell) are split at the header's column
+  boundaries when at least three rows fit them cleanly; section-title rows keep spanning.
+- A ruled header box above an unruled body is joined with the body found by the
+  borderless detector, instead of the body being discarded.
+- Tables placed side by side are separated instead of being parsed as one grid.
+
+Borderless (text-based) tables:
+
+- The grid of a borderless table is built from its known pseudo separators instead of being
+  re-detected in the image; text masking used to erase parts of the pseudo lines, which split
+  tables at random rows.
+- Stacked pieces of one borderless table (split by a section heading or a column starting
+  lower down) are joined, unless a caption lies between them or both start with the same row
+  label (two tables with the same layout).
+- Numeric columns closer together than the phrase gap are split at gaps free in every row.
+- Rejected as tables: running text in every column (multi-column page layout), lists with
+  symbol-font bullets, rotated chart labels, single rows.
+
 ## 2.0.0 — 2026-10-15
 
 Complete rewrite of the original research scripts as the `spartan` package.

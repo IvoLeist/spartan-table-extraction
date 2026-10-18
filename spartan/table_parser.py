@@ -20,7 +20,10 @@ Recovers a reliable cell grid from a table segment image:
    does not, the atomic cells are merged. Each connected group becomes one cell,
    so a cell crossed by *k* extended lines spans *k + 1* rows/columns, exactly
    as described in the paper.
-5. **Refinement** - empty outer rows/columns that are not supported by real
+5. **Unruled rows / columns** (extension) - tables that rule only the header
+   leave the body as one tall cell per column, or one wide cell per row; such
+   cells are split at text-line gaps or at the header's column boundaries.
+6. **Refinement** - empty outer rows/columns that are not supported by real
    lines are trimmed, giving a refined table region.
 """
 
@@ -33,7 +36,7 @@ import cv2
 import numpy as np
 
 from .config import PipelineConfig
-from .models import BBox, GridCell, ParsedTable, Word
+from .models import BBox, GridCell, ParsedTable, Word, group_words_into_lines
 
 log = logging.getLogger(__name__)
 
@@ -271,6 +274,116 @@ def parse_table(image: np.ndarray, words: Sequence[Word], config: PipelineConfig
     table.refined_bbox = BBox(table.xs[0], table.ys[0], table.xs[-1], table.ys[-1])
     log.debug("Parsed table %dx%d: %d rows, %d cols, %d cells", width, height, table.n_rows, table.n_cols, len(table.cells))
     return table
+
+
+def grid_from_separators(
+    width: int, height: int, columns: Sequence[float], rows: Sequence[float], config: PipelineConfig
+) -> ParsedTable:
+    """Grid of a pseudo-bordered (borderless) table from its known separators.
+
+    The pseudo boundaries are drawn by SPARTAN itself, so their positions are
+    known exactly. Re-detecting them in the image is unreliable: text masking
+    erases the parts of a pseudo line that run close to a word, which turns
+    rows into spurious full-width cells.
+    """
+    w1, h1 = float(width - 1), float(height - 1)
+    v_lines = [(x, 0.0, x, h1) for x in columns if 0 < x < w1]
+    h_lines = [(0.0, y, w1, y) for y in rows if 0 < y < h1]
+    table = build_grid(h_lines, v_lines, width, height, config)
+    table.refined_bbox = BBox(table.xs[0], table.ys[0], table.xs[-1], table.ys[-1])
+    return table
+
+
+def split_unruled_rows(table: ParsedTable, words: Sequence[Word], config: PipelineConfig) -> ParsedTable:
+    """Split grid rows that hold several table rows without separating lines.
+
+    Many tables rule only the header (and the columns): the whole body then
+    falls into one grid row, each column's values stacked in a single cell.
+    A grid row is split at the gaps between its text lines when it looks like
+    tabular data, not wrapped text: most lines (and at least three) spanning
+    two or more columns, at least two columns (and half of the occupied ones)
+    with text on most lines, short cell texts and at least one mostly numeric
+    column. The first grid row is the header, whose words often wrap, and is
+    never split; neither are rows of wrapped sentences in narrow columns.
+    """
+    if not words or table.n_cols < 2:
+        return table
+    xs, ys = table.xs, table.ys
+    matrix = table.matrix()
+    height = float(np.median([w.bbox.height for w in words]))
+    extra: list[float] = []
+    for r in range(1, table.n_rows):
+        y0, y1 = ys[r], ys[r + 1]
+        if y1 - y0 < 3 * height:
+            continue
+        band = [w for w in words if y0 <= w.bbox.cy < y1]
+        lines = group_words_into_lines(band)
+        if len(lines) < 3:
+            continue
+        cols_per_line, frag_words = [], []
+        numeric: dict[int, int] = {}
+        for line in lines:
+            per_col: dict[int, list[str]] = {}
+            for w in line:
+                c = min(max(int(np.searchsorted(xs, w.bbox.cx, side="right")) - 1, 0), table.n_cols - 1)
+                per_col.setdefault(matrix[r][c].id, []).append(w.text)   # a spanning cell counts once
+            cols_per_line.append(set(per_col))
+            for cell, texts in per_col.items():
+                frag_words.append(len(texts))
+                numeric[cell] = numeric.get(cell, 0) + any(ch.isdigit() for t in texts for ch in t)
+        occupied = set().union(*cols_per_line)
+        dense = [c for c in occupied if sum(c in s for s in cols_per_line) >= 0.6 * len(lines)]
+        multi = sum(len(s) >= 2 for s in cols_per_line)
+        has_numbers = any(numeric.get(c, 0) >= 0.6 * sum(c in s for s in cols_per_line) for c in dense)
+        if (len(dense) >= 2 and len(dense) >= 0.5 * len(occupied) and multi >= max(3, 0.6 * len(lines))
+                and float(np.median(frag_words)) <= 3 and has_numbers):
+            for upper, lower in zip(lines[:-1], lines[1:]):
+                bottom = max(w.bbox.y1 for w in upper)
+                top = min(w.bbox.y0 for w in lower)
+                extra.append((bottom + top) / 2.0)
+    if not extra:
+        return table
+    w1 = float(table.width - 1)
+    h_lines = list(table.horizontal_lines) + [(0.0, y, w1, y) for y in extra]
+    split = build_grid(h_lines, table.vertical_lines, table.width, table.height, config)
+    split.refined_bbox = table.refined_bbox
+    log.debug("Split unruled rows: %d -> %d rows", table.n_rows, split.n_rows)
+    return split
+
+
+def split_unruled_columns(table: ParsedTable, words: Sequence[Word], config: PipelineConfig) -> ParsedTable:
+    """Split rows whose columns are not ruled although the header's are.
+
+    Some tables draw column lines only in the header, so every body row is a
+    single cell holding all its values ("Austria 86.2 13.8 0 3,375"). A row
+    cell spanning several columns is split at the column boundaries when its
+    words fall into two or more of those columns and none crosses a boundary.
+    This is done only when at least three rows qualify, so section titles
+    (full-width rows) keep their meaning.
+    """
+    if not words or table.n_cols < 2:
+        return table
+    xs = table.xs
+    pieces: list[Line] = []
+    rows = 0
+    for cell in table.cells:
+        if cell.col_span < 2:
+            continue
+        inside = [w for w in words if cell.bbox.contains_point(w.bbox.cx, w.bbox.cy)]
+        bounds = xs[cell.col + 1:cell.col + cell.col_span]
+        if not inside or any(w.bbox.x0 < x < w.bbox.x1 for w in inside for x in bounds):
+            continue
+        occupied = {int(np.searchsorted(xs, w.bbox.cx, side="right")) - 1 for w in inside}
+        if len(occupied) < 2:
+            continue
+        rows += 1
+        pieces += [(x, cell.bbox.y0, x, cell.bbox.y1) for x in bounds]
+    if rows < 3:
+        return table
+    split = build_grid(table.horizontal_lines, list(table.vertical_lines) + pieces, table.width, table.height, config)
+    split.refined_bbox = table.refined_bbox
+    log.debug("Split unruled columns in %d rows", rows)
+    return split
 
 
 def remove_empty_lines(table: ParsedTable, texts: dict[int, str]) -> ParsedTable:
