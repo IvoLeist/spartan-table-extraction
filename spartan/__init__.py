@@ -12,7 +12,7 @@ extraction from documents using advanced OpenCV heuristics and OCR techniques",
 Scientific Reports 16:14954 (2026). https://doi.org/10.1038/s41598-026-44325-7
 """
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 
 from .config import OcrScope, PipelineConfig, TextSourceMode  # noqa: E402
 

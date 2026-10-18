@@ -25,3 +25,10 @@ def test_words_in_box_relative():
     inside = words_in_box(words, BBox(40, 40, 100, 100))
     assert [w.text for w in inside] == ["in"]
     assert inside[0].bbox.x0 == 10
+
+
+def test_translate_keeps_word_flags():
+    word = make_word("RULES", 10, 20)
+    word.vertical = True
+    moved = word.translate(5, 5)
+    assert moved.vertical and moved.bbox.x0 == 15

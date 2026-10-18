@@ -87,19 +87,45 @@ def extract_pdf_words(page: pdfium.PdfPage, image_width: int, image_height: int)
             except pdfium.PdfiumError:
                 glyphs.append(None)
                 continue
+            if loose[0] == loose[2] or loose[1] == loose[3]:
+                loose = _line_box(textpage, i, tight)   # pdfium 4.x: empty loose boxes for rotated text
             box, tbox = _to_pixels(loose, transform), _to_pixels(tight, transform)
-            glyphs.append(_Glyph(ch, box, tbox) if box.width > 0 and box.height > 0 else None)
+            glyphs.append(_Glyph(ch, box, tbox, _is_vertical(textpage, i, transform))
+                          if box.width > 0 and box.height > 0 else None)
     finally:
         textpage.close()
 
     return _glyphs_to_words(glyphs), n_chars
 
 
-class _Glyph:
-    __slots__ = ("ch", "box", "tight")
+def _line_box(textpage: pdfium.PdfTextPage, index: int, tight: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+    """Glyph box spanning the full line height (descender to ascender), from the text matrix."""
+    matrix = pdfium_c.FS_MATRIX()
+    ox, oy = ctypes.c_double(), ctypes.c_double()
+    if not (pdfium_c.FPDFText_GetMatrix(textpage.raw, index, matrix)
+            and pdfium_c.FPDFText_GetCharOrigin(textpage.raw, index, ox, oy)):
+        return tight
+    size = pdfium_c.FPDFText_GetFontSize(textpage.raw, index) or 1.0
+    ux, uy = matrix.c * size, matrix.d * size            # the glyph's "up" direction, one em long
+    xs = [tight[0], tight[2], ox.value + ux, ox.value - 0.25 * ux]
+    ys = [tight[1], tight[3], oy.value + uy, oy.value - 0.25 * uy]
+    return min(xs), min(ys), max(xs), max(ys)
 
-    def __init__(self, ch: str, box: BBox, tight: BBox):
-        self.ch, self.box, self.tight = ch, box, tight
+
+def _is_vertical(textpage: pdfium.PdfTextPage, index: int, transform: np.ndarray) -> bool:
+    """True when the glyph's baseline runs vertically on the rendered page."""
+    matrix = pdfium_c.FS_MATRIX()
+    if not pdfium_c.FPDFText_GetMatrix(textpage.raw, index, matrix):
+        return False
+    dx, dy = transform[:, :2] @ np.array([matrix.a, matrix.b])
+    return abs(dy) > abs(dx)
+
+
+class _Glyph:
+    __slots__ = ("ch", "box", "tight", "vertical")
+
+    def __init__(self, ch: str, box: BBox, tight: BBox, vertical: bool = False):
+        self.ch, self.box, self.tight, self.vertical = ch, box, tight, vertical
 
 
 def _to_pixels(rect: tuple[float, float, float, float], transform: np.ndarray) -> BBox:
@@ -169,6 +195,7 @@ def _line_to_words(line: list["_Glyph | None"]) -> list[Word]:
                 bbox=BBox.union_all(g.box for g in current),
                 source="pdf",
                 ink_bbox=BBox.union_all(g.tight for g in current),
+                vertical=all(g.vertical for g in current),
             ))
         current.clear()
 

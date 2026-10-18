@@ -212,7 +212,8 @@ standard profile `--preprocess --region` (the evaluation configuration) is used.
     "title": "PDN 23_0061 Discontinued Parts Material List",
     "title_source": "table",              // table | context | none
     "columns": ["Model", "Product Family", "Replacement Part", "Pin To Pin Compatible", "Comments"],
-    "header_rows": 1,
+    "header": [["Model", "Product Family", "Replacement Part", "Pin To Pin Compatible", "Comments"]],
+    "header_rows": 1,                     // header = header rows as laid out; columns = one name per column
     "rows": [["ADAU1328BSTZ", "ADAU1328", "AD1938WBSTZ", "Yes", "None"], ...],
     "merged_cells": [{"row": 4, "col": 2, "row_span": 2, "col_span": 1, "merge_type": "row", "text": "..."}],
     "pairs": [...],                       // key_value tables only

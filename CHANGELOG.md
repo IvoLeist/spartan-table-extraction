@@ -1,5 +1,35 @@
 # Changelog
 
+## 2.2.0 — 2026-10-18
+
+Measured on the ICDAR 2013 table competition dataset (corrected version, 67 PDFs):
+GriTS-Con 77.5 → 81.6, table precision 79 % → 83 %, tables detected 88 % → 89 %,
+adjacency F1 81.9 → 85.9. Output on PCN/PDN notices unchanged.
+
+Output:
+
+- New `header` field: the header rows as laid out in the table (spanning text repeated),
+  next to the flattened `columns` names. Multi-row headers keep their structure and empty
+  header cells stay empty instead of becoming `column_N`.
+
+Text layer:
+
+- Rotated text with pypdfium2 4.x: pdfium returned empty glyph boxes, so landscape pages
+  (`/Rotate 90`) lost all their text. The box is now rebuilt from the glyph's matrix.
+- Vertical text (margin notes such as the Federal Register side line) is flagged and no
+  longer used to detect borderless tables.
+
+Tables:
+
+- Narrow sliver columns made by the edge of a shaded header are folded into their neighbour.
+- Columns holding only currency symbols ("$") are joined with the amounts on their right.
+- Sections of a financial statement (numeric columns aligned, short headings between) are
+  joined into one borderless table.
+- Row labels with several indentation levels stay in the borderless table when their values
+  line up.
+- Rejected as tables: chart axis labels (one value per row) and multi-column prose next to
+  an empty column.
+
 ## 2.1.0 — 2026-10-18
 
 Measured on the ICDAR 2013 table competition dataset (corrected version, 67 PDFs):

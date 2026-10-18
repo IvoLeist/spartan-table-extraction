@@ -1,6 +1,7 @@
 """Text-based (borderless) detector: false positives, fragmentation and grid."""
 
-from spartan.region_segmentation import find_text_tables
+from spartan.models import group_words_into_lines
+from spartan.region_segmentation import _is_prose, _line_phrases, find_text_tables
 from spartan.table_parser import grid_from_separators
 
 from .conftest import make_word
@@ -22,6 +23,16 @@ def test_two_column_prose_is_not_a_table(config):
         words += _phrase("the quick brown fox jumps over", 200, y)
         words += _phrase("a lazy dog sleeps in the sun", 1000, y)
     assert find_text_tables(words, 1600, 2000, config) == []
+
+
+def test_prose_check_ignores_empty_columns(config):
+    words = []
+    for r in range(6):
+        y = 300 + r * 45
+        words += _phrase("the quick brown fox jumps over", 200, y)
+        words += _phrase("a lazy dog sleeps in the sun", 1000, y)
+    phrases = _line_phrases(group_words_into_lines(words), config)
+    assert _is_prose(phrases, [100, 180, 900, 1800])      # first column holds no text
 
 
 def test_symbol_bullets_are_a_list(config):
@@ -73,6 +84,34 @@ def test_tables_with_same_layout_stay_separate(config):
             y += 60
         y += 75
     assert len(find_text_tables(words, 1600, 2000, config)) == 2
+
+
+def test_statement_sections_join_across_headings(config):
+    # Balance-sheet sections: same right-aligned amount columns, two headings and a wide gap between.
+    words, y = [], 300
+    sections = [["Treasury", "Receivable", "Advances"], ["Payable", "Benefits", "Leave"], ["Unexpended", "Cumulative", "Total"]]
+    for i, labels in enumerate(sections):
+        if i:
+            y += 30
+            words += [make_word("Liabilities", 200, y)]
+            y += 60
+            words += [make_word("Intragovernmental", 200, y), make_word("Liabilities", 530, y)]
+            y += 75
+        for label in labels:
+            words += [make_word(label, 230, y), make_word("12,175", 1000, y, 108), make_word("9,782", 1210, y, 90)]
+            y += 45
+    cands = find_text_tables(words, 1600, 2400, config)
+    assert len(cands) == 1
+    assert cands[0].bbox.y0 < 300 and cands[0].bbox.y1 > y - 45
+
+
+def test_indented_row_labels_stay_in_the_table(config):
+    words, y = [], 300
+    for label, x in [("Research", 160), ("Gross", 220), ("Net", 160), ("Education", 220), ("Less", 160), ("Total", 220)]:
+        words += [make_word(label, x, y), make_word("836,755", 1000, y, 126), make_word("775,422", 1200, y, 126)]
+        y += 45
+    [cand] = find_text_tables(words, 1600, 2000, config)
+    assert cand.bbox.x0 < 160
 
 
 def test_grid_from_separators(config):

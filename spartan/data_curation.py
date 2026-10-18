@@ -121,13 +121,19 @@ def _split_sections(matrix: list[list[GridCell]]) -> list[tuple[list[str], list[
     return cleaned
 
 
-def _collapse_columns(matrix: list[list[GridCell]], rows: list[int], widths: list[float]) -> tuple[list[list[GridCell]], list[float]]:
+def _collapse_columns(
+    matrix: list[list[GridCell]], rows: list[int], widths: list[float], sliver: float = 0.0
+) -> tuple[list[list[GridCell]], list[float]]:
     """Section view with redundant atomic columns removed.
 
     The atomic grid is shared by the whole table, so lines that exist only in
     one section split columns in every other section. Adjacent atomic columns
     that are covered by the very same cell in every row of the section carry no
     information and are folded into one column (their widths are added).
+
+    Columns narrower than ``sliver`` (e.g. made by the edge of a shaded header)
+    are folded into a neighbour when each of their cells is either empty or part
+    of that neighbour's cell.
     """
     n_cols = len(matrix[0]) if matrix else 0
     groups: list[list[int]] = []
@@ -136,9 +142,72 @@ def _collapse_columns(matrix: list[list[GridCell]], rows: list[int], widths: lis
             groups[-1].append(c)
         else:
             groups.append([c])
-    sub = [[matrix[r][g[0]] for g in groups] for r in rows]
+    reps = [g[0] for g in groups]
+
+    def foldable(i: int, j: int) -> bool:
+        a, b = reps[i], reps[j]
+        own = {matrix[r][c].id for r in rows for k, g in enumerate(groups) if k != i for c in g}
+        return any(matrix[r][a].id == matrix[r][b].id for r in rows) and all(
+            matrix[r][a].id == matrix[r][b].id or (not matrix[r][a].text.strip() and matrix[r][a].id not in own)
+            for r in rows
+        )
+
+    i = 0
+    while sliver > 0 and len(groups) > 2 and i < len(groups):
+        if sum(widths[c] for c in groups[i]) < sliver:
+            j = next((j for j in (i - 1, i + 1) if 0 <= j < len(groups) and foldable(i, j)), None)
+            if j is not None:
+                groups[j] = sorted(groups[j] + groups[i])
+                del groups[i], reps[i]
+                continue
+        i += 1
+    sub = [[matrix[r][rep] for rep in reps] for r in rows]
     sub_widths = [sum(widths[c] for c in g) for g in groups]
     return sub, sub_widths
+
+
+def _has_columns(sub: list[list[GridCell]]) -> bool:
+    """At least two rows hold two or more different non-empty texts."""
+    return sum(1 for row in sub if len({c.text.strip() for c in row} - {""}) >= 2) >= 2
+
+
+_CURRENCY = {"$", "US$", "€", "£", "¥"}
+
+
+def _join_currency_columns(
+    raw_header: list[str], header: list[list[str]], values: list[list[str]],
+    widths: list[float], merged: list[MergedCellInfo],
+) -> None:
+    """Fold columns holding only currency symbols into the amount column on their right.
+
+    Financial statements set "$" apart from the figure ("$   12,175,088"), which
+    makes the symbols a column of their own.
+    """
+    c = 0
+    while c < len(widths) - 1:
+        filled = [row[c].strip() for row in values if row[c].strip()]
+        if not filled or not all(v in _CURRENCY for v in filled) or any(
+            h[c].strip() not in ("", h[c + 1].strip()) for h in header
+        ):
+            c += 1
+            continue
+        for row in values:
+            row[c + 1] = f"{row[c].strip()} {row[c + 1]}".strip()
+            del row[c]
+        for h in header:
+            del h[c]
+        if raw_header:
+            raw_header[c + 1] = raw_header[c + 1] or raw_header[c]
+            del raw_header[c]
+        widths[c + 1] += widths[c]
+        del widths[c]
+        for m in list(merged):
+            if m.col == c:
+                merged.remove(m)
+            elif m.col > c:
+                m.col -= 1
+            elif m.col + m.col_span > c:
+                m.col_span -= 1
 
 
 def _header_depth(sub: list[list[GridCell]], max_rows: int) -> int:
@@ -292,10 +361,12 @@ def build_tables(
     for title_lines, rows, notes in sections:
         if not rows:
             continue
-        sub, widths = _collapse_columns(matrix, rows, atomic_widths)
+        sub, widths = _collapse_columns(matrix, rows, atomic_widths, config.px(40))
         n_cols = len(widths)
         if n_cols == 1 and len(sub) <= 2:
             continue
+        if segment.detection_method == "text" and not _has_columns(sub):
+            continue                # e.g. chart axis labels: one value per row
         title = " ".join(title_lines).strip()
 
         form = _form_pairs(sub) if n_cols > 2 else None
@@ -358,6 +429,13 @@ def build_tables(
                     row[c] = val
         if ttype is TableType.KEY_VALUE:
             values = _clean_pairs(values)
+        else:
+            header = [[cell.text for cell in row] for row in sub[:header_rows]]
+            _join_currency_columns(raw_header, header, values, widths, merged)
+            if len(columns) != len(widths):
+                columns = [name or f"column_{i + 1}" for i, name in enumerate(raw_header)] or [
+                    f"column_{i + 1}" for i in range(len(widths))
+                ]
 
         tables.append(Table(
             type=ttype,
@@ -373,6 +451,7 @@ def build_tables(
             text_source=TextSource.OCR.value if used_ocr else text_source,
             sources=[TableSource(page_number, segment.id, source_box)],
             raw_header=raw_header,
+            header=header if ttype is not TableType.KEY_VALUE else [],
         ))
     return tables
 

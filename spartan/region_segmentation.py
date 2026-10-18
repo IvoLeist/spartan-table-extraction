@@ -216,7 +216,22 @@ def find_text_tables(words: Sequence[Word], width: int, height: int, config: Pip
         if top_b - top_a > 3.5 * max(line_h[a_idx], line_h[b_idx]):
             continue  # too far apart: not consecutive table rows
         used = set()
+        # Row labels: indentation levels ("Gross Costs" under "Research ...") differ.
+        # Linked only when the values of both lines line up as well (table rows).
+        la, lb = phrases[a_idx][0], phrases[b_idx][0]
+        indent = 4 * max(line_h[a_idx], line_h[b_idx])
+        values_aligned = any(
+            _aligned(pa.bbox, pb.bbox, tol, p.use_right_alignment)
+            for pa in phrases[a_idx][1:] for pb in phrases[b_idx][1:]
+        )
+        if (values_aligned and abs(la.bbox.x0 - lb.bbox.x0) <= indent
+                and not _CAPTION.match(" ".join(w.text for w in lb.words))
+                and la.bbox.x1 < phrases[b_idx][1].bbox.x0 and lb.bbox.x1 < phrases[a_idx][1].bbox.x0):
+            used.add(id(lb))
+            parent[find(node(lb))] = find(node(la))
         for pa in phrases[a_idx]:
+            if pa is la and id(lb) in used:
+                continue
             match = next(
                 (pb for pb in phrases[b_idx] if id(pb) not in used and _aligned(pa.bbox, pb.bbox, tol, p.use_right_alignment)),
                 None,
@@ -265,7 +280,7 @@ def find_text_tables(words: Sequence[Word], width: int, height: int, config: Pip
 
     candidates = []
     min_w = config.px(p.min_text_table_width)
-    for box in _merge_blocks(blocks, lines, float(np.median(line_h))):
+    for box in _merge_blocks(blocks, lines, phrases, float(np.median(line_h)), tol):
         if box.width < min_w:
             continue
         cand = _build_pseudo_grid(box, words, width, height, config)
@@ -274,7 +289,13 @@ def find_text_tables(words: Sequence[Word], width: int, height: int, config: Pip
     return _remove_nested(candidates)
 
 
-def _merge_blocks(blocks: list[tuple[BBox, int, int]], lines: list[list[Word]], line_height: float) -> list[BBox]:
+def _merge_blocks(
+    blocks: list[tuple[BBox, int, int]],
+    lines: list[list[Word]],
+    phrases: list[list[_Phrase]],
+    line_height: float,
+    tol: float,
+) -> list[BBox]:
     """Join vertically adjacent blocks that are pieces of one table.
 
     A section heading, a wrapped label or a column that starts lower down
@@ -283,6 +304,10 @@ def _merge_blocks(blocks: list[tuple[BBox, int, int]], lines: list[list[Word]], 
     separated by at most a few lines, no caption ("Table 2", "Source: ...") lies
     between, and the lower block does not start with the same row label as the
     upper one (two tables with the same layout, e.g. one per year).
+
+    Blocks whose numeric columns line up (shared right edges, as in the
+    sections of a financial statement) may be further apart when only short
+    headings lie between them.
     """
     def text(li: int) -> str:
         return " ".join(w.text for w in lines[li])
@@ -294,6 +319,18 @@ def _merge_blocks(blocks: list[tuple[BBox, int, int]], lines: list[list[Word]], 
                 break
             out.append(w)
         return " ".join(w.text for w in out)
+
+    def numeric(ph: _Phrase) -> bool:
+        t = "".join(w.text for w in ph.words)
+        return sum(ch.isdigit() for ch in t) >= 0.5 * len(t)
+
+    def value_edges(first: int, last: int) -> list[float]:
+        edges = sorted({round(ph.bbox.x1) for li in range(first, last + 1) for ph in phrases[li][1:] if numeric(ph)})
+        return [e for i, e in enumerate(edges) if not i or e - edges[i - 1] > tol]
+
+    def columns_line_up(a: tuple[int, int], b: tuple[int, int]) -> bool:
+        ea, eb = value_edges(*a), value_edges(*b)
+        return sum(any(abs(x - y) <= tol for y in eb) for x in ea) >= 2
 
     # Blocks found inside a larger block (sub-groups of its columns) add nothing.
     blocks = sorted(blocks, key=lambda b: -b[0].area)
@@ -307,10 +344,14 @@ def _merge_blocks(blocks: list[tuple[BBox, int, int]], lines: list[list[Word]], 
         if merged:
             prev, p_first, p_last = merged[-1]
             overlap = min(prev.x1, box.x1) - max(prev.x0, box.x0)
-            between = [text(li) for li in range(p_last + 1, first)]
+            gap_lines = range(p_last + 1, first)
+            between = [text(li) for li in gap_lines]
+            near = box.y0 - prev.y1 <= 3.5 * line_height and len(gap_lines) <= 2
+            sections = (box.y0 - prev.y1 <= 7 * line_height and len(gap_lines) <= 4
+                        and all(len(phrases[li]) == 1 and len(lines[li]) <= 6 for li in gap_lines)
+                        and columns_line_up((p_first, p_last), (first, last)))
             if (overlap >= 0.6 * max(prev.width, box.width)
-                    and box.y0 - prev.y1 <= 3.5 * line_height
-                    and first - p_last - 1 <= 2
+                    and (near or sections)
                     and not any(_CAPTION.match(t) for t in between)
                     and label(first) != label(p_first)):
                 merged[-1] = (prev.union(box), p_first, max(p_last, last))
@@ -457,7 +498,8 @@ def _is_prose(phrases: list[list[_Phrase]], edges: list[float]) -> bool:
         for c, k in enumerate(per_col):
             if k:
                 counts[c].append(k)
-    return all(len(c) and float(np.median(c)) >= 5 for c in counts)
+    filled = [c for c in counts if c]          # an empty column says nothing either way
+    return len(filled) >= 2 and all(float(np.median(c)) >= 5 for c in filled)
 
 
 def draw_pseudo_boundaries(table_image: np.ndarray, cand: TableCandidate, origin: BBox, config: PipelineConfig) -> np.ndarray:
@@ -527,7 +569,8 @@ def detect_tables(image: np.ndarray, words: Sequence[Word], config: PipelineConf
     cropped_words = words_in_box(words, crop)
 
     boundary, cells = find_boundary_tables(cropped_binary, config)
-    text = find_text_tables(cropped_words, int(crop.width), int(crop.height), config)
+    horizontal = [w for w in cropped_words if not w.vertical]     # margin notes are no table text
+    text = find_text_tables(horizontal, int(crop.width), int(crop.height), config)
     tables = unify_tables(boundary, text, cropped_words, int(crop.width), int(crop.height), config)
     debug = {"boundary": boundary, "cells": cells, "text": [t.bbox for t in text]}
     return crop, tables, debug

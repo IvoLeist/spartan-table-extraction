@@ -7,10 +7,10 @@ from spartan.table_parser import parse_table
 from .conftest import draw_grid_table
 
 
-def _curate(config, img, texts_by_pos):
+def _curate(config, img, texts_by_pos, method="boundary"):
     parsed = parse_table(img, [], config)
     texts = {c.id: texts_by_pos.get((c.row, c.col), "") for c in parsed.cells}
-    seg = Segment("table_1", SegmentKind.TABLE, BBox(0, 0, img.shape[1], img.shape[0]), img, [], "boundary")
+    seg = Segment("table_1", SegmentKind.TABLE, BBox(0, 0, img.shape[1], img.shape[0]), img, [], method)
     return build_tables(parsed, texts, seg, 1, BBox(0, 0, 0, 0), config, "pdf_text_layer", False)
 
 
@@ -40,8 +40,42 @@ def test_nested_header_and_row_span(config):
     assert table.type is TableType.NESTED
     assert table.header_rows == 2
     assert table.columns == ["Discontinued Part", "Discontinued Package", "New Part", "New Package"]
+    assert table.header == [["Discontinued", "Discontinued", "New", "New"], ["Part", "Package", "Part", "Package"]]
     assert table.rows[1] == ["BSC025N03LS", "TDSON-8", "ISC024N03", "TDSON-8"]  # merged value repeated
     assert any(m.row_span == 2 and m.col == 3 for m in table.merged_cells)
+
+
+def test_sliver_columns_folded(config):
+    # A shaded header draws lines 25 px inside the frame; the data rows span across them.
+    img = draw_grid_table(
+        rows=[0, 60, 120, 180], cols=[0, 25, 325, 625, 925, 950],
+        skip_v={(1, 1), (1, 2), (4, 1), (4, 2)},
+    )
+    texts = {(0, 1): "Name", (0, 2): "Qty", (0, 3): "Price",
+             (1, 0): "Alpha", (1, 2): "5", (1, 3): "1.00",
+             (2, 0): "Beta", (2, 2): "7", (2, 3): "2.50"}
+    [table] = _curate(config, img, texts)
+    assert table.columns == ["Name", "Qty", "Price"]
+    assert table.header == [["Name", "Qty", "Price"]]
+    assert table.rows == [["Alpha", "5", "1.00"], ["Beta", "7", "2.50"]]
+
+
+def test_currency_columns_join_amounts(config):
+    img = draw_grid_table(rows=[0, 60, 120, 180], cols=[0, 400, 500, 750, 850, 1100])
+    texts = {(0, 0): "Assets", (0, 2): "2011", (0, 4): "2010",
+             (1, 0): "Fund Balance", (1, 1): "$", (1, 2): "12,175,088", (1, 3): "$", (1, 4): "12,458,688",
+             (2, 0): "Advances", (2, 2): "69,228", (2, 4): "9,782"}
+    [table] = _curate(config, img, texts)
+    assert table.columns == ["Assets", "2011", "2010"]
+    assert table.rows == [["Fund Balance", "$ 12,175,088", "$ 12,458,688"], ["Advances", "69,228", "9,782"]]
+
+
+def test_one_value_per_row_text_table_rejected(config):
+    # Chart axis ticks picked up by the borderless detector.
+    img = draw_grid_table(rows=[0, 60, 120, 180, 240], cols=[0, 300, 600])
+    texts = {(0, 0): "5", (0, 1): "5", (1, 0): "0", (1, 1): "0", (2, 0): "-5", (2, 1): "-5", (3, 0): "-10", (3, 1): "-10"}
+    assert _curate(config, img, texts, method="text") == []
+    assert _curate(config, img, texts) != []
 
 
 def test_title_row_and_key_value(config):

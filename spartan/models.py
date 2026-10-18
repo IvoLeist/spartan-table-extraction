@@ -134,6 +134,7 @@ class Word:
     source: str = "pdf"          # "pdf" or "ocr"
     confidence: float = 1.0
     ink_bbox: BBox | None = None # tight glyph box, used to mask text without touching rules
+    vertical: bool = False       # runs top-to-bottom on the rendered page (margin notes, rotated labels)
 
     @property
     def ink(self) -> BBox:
@@ -141,7 +142,7 @@ class Word:
 
     def translate(self, dx: float, dy: float) -> "Word":
         ink = self.ink_bbox.translate(dx, dy) if self.ink_bbox else None
-        return Word(self.text, self.bbox.translate(dx, dy), self.source, self.confidence, ink)
+        return Word(self.text, self.bbox.translate(dx, dy), self.source, self.confidence, ink, self.vertical)
 
 
 def words_in_box(words: Sequence[Word], box: BBox, *, relative: bool = True) -> list[Word]:
@@ -390,6 +391,7 @@ class Table:
     continued_to_next: bool = False
     sources: list[TableSource] = field(default_factory=list)
     raw_header: list[str] = field(default_factory=list)   # header texts before fallback naming
+    header: list[list[str]] = field(default_factory=list)  # header rows as laid out (spanning text repeated)
 
     @property
     def n_cols(self) -> int:
@@ -410,6 +412,7 @@ class Table:
             "title": self.title,
             "title_source": self.title_source,
             "columns": self.columns,
+            "header": self.header,
             "header_rows": self.header_rows,
             "rows": self.rows,
             "n_rows": len(self.rows),
